@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D 模型浏览器 · Pro</title>
+<style>
+  :root { --bg:#000000; --panel:rgba(0,0,0,0.95); --border:#00e5ff; --accent:#00e5ff; --text:#00e5ff; --muted:#00e5ff; }
+  html, body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font:13px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif; }
+  #app { position:relative; width:100%; height:100%; }
+  canvas { display:block; width:100%; height:100%; touch-action:none; }
+  .bar { position:absolute; top:12px; left:12px; right:12px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; z-index:20; background:var(--panel); backdrop-filter:blur(10px); border:1px solid var(--border); border-radius:12px; padding:8px 10px; }
+  .bar .title { font-weight:600; margin-right:8px; color:var(--accent); }
+  .btn { background:var(--accent); color:#000000; border:1px solid var(--accent); border-radius:8px; padding:6px 10px; cursor:pointer; font-size:12px; font-weight:600; }
+  .btn:hover { background:var(--accent); filter:brightness(1.15); }
+  .btn.active { background:#000000; color:var(--accent); border-color:var(--accent); }
+  .sep { width:1px; height:22px; background:var(--border); margin:0 4px; }
+  select { background:#000000; color:var(--text); border:1px solid var(--border); border-radius:8px; padding:6px 8px; font-size:12px; color-scheme:dark; }
+  option { background:#000000; color:var(--text); }
+  input[type=range] { width:110px; }
+  .num { width:62px; background:#000000; color:var(--text); border:1px solid var(--border); border-radius:6px; padding:4px 6px; font-size:12px; text-align:center; }
+  .num:focus { outline:1px solid var(--accent); }
+  .panel { position:absolute; top:72px; left:12px; width:260px; z-index:15; background:#000000; backdrop-filter:blur(10px); border:1px solid var(--border); border-radius:12px; padding:12px 14px; font-size:12px; color:var(--text); }
+  .panel h3 { margin:0 0 8px; font-size:13px; color:var(--text); }
+  .row { display:flex; justify-content:space-between; margin:4px 0; }
+  .row span:first-child { color:var(--muted); }
+  .drop { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:30; background:#000000; color:var(--text); }
+  .drop.hidden { display:none; }
+  .drop .box { border:2px dashed var(--border); border-radius:16px; padding:48px 64px; text-align:center; background:#000000; }
+  .drop h2 { margin:0 0 8px; color:var(--text); }
+  .drop p { margin:4px 0; color:var(--text); font-size:13px; opacity:0.9; }
+  .drop label { display:inline-block; margin-top:12px; padding:10px 22px; background:var(--text); color:#000000; border-radius:8px; cursor:pointer; font-weight:600; }
+  .status { position:absolute; bottom:10px; left:12px; right:12px; font-size:12px; color:#e0e4f0; z-index:15; display:flex; justify-content:space-between; }
+  .err { color:#ff7a7a; }
+  #clipCtl { display:none; align-items:center; gap:6px; }
+  #clipCtl.show { display:flex; }
+  #animCtl { display:none; align-items:center; gap:6px; }
+  #animCtl.show { display:flex; }
+  @media (max-width: 768px) {
+    .bar { padding:6px; gap:4px; }
+    .btn { padding:4px 6px; font-size:11px; }
+    .panel { width: calc(50% - 12px); top:auto; bottom: 8px; }
+    #infoPanel { left:8px; right:auto; }
+    #transformPanel { right:8px; left:auto; }
+    .bar .title { display:none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="c"></canvas>
+
+  <div class="bar">
+    <span class="title">3D Browser Pro</span>
+    <button class="btn" id="openBtn">打开文件</button>
+    <input id="file" type="file" accept=".fbx,.glb,.gltf,.obj,.stl,.ply,.dae,.3mf" hidden>
+    <div class="sep"></div>
+    <select id="viewMode">
+      <option value="solid">实体</option>
+      <option value="wire">线框</option>
+    </select>
+    <button class="btn" id="wireBtn">线框叠加</button>
+    <div class="sep"></div>
+    <select id="transformMode">
+      <option value="none">无变换</option>
+      <option value="translate">移动</option>
+      <option value="rotate">旋转</option>
+      <option value="scale">缩放</option>
+    </select>
+    <button class="btn" id="spaceBtn">世界坐标</button>
+    <label style="font-size:11px;color:var(--muted)">吸附<input id="snapInput" type="number" min="0" step="0.1" value="0" style="width:52px;margin-left:4px;background:rgba(255,255,255,0.06);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px"></label>
+    <div class="sep"></div>
+    <select id="bgMode">
+      <option value="dark">深色背景</option>
+      <option value="light">浅色背景</option>
+      <option value="studio">摄影棚</option>
+      <option value="transparent">透明</option>
+    </select>
+    <button class="btn" id="envBtn">环境光</button>
+    <div class="sep"></div>
+    <button class="btn active" id="gridBtn">网格</button>
+    <button class="btn" id="axesBtn">坐标轴</button>
+    <button class="btn" id="measureBtn">测量</button>
+    <button class="btn" id="clipBtn">剖切</button>
+    <div id="clipCtl">
+      <input type="range" id="clipSlider" min="0" max="100" value="50">
+    </div>
+    <div class="sep"></div>
+    <div id="animCtl">
+      <select id="animSelect"></select>
+      <button class="btn" id="animPlay">播放</button>
+    </div>
+    <div class="sep"></div>
+    <button class="btn" id="shotBtn">截图</button>
+    <button class="btn" id="fsBtn">全屏</button>
+    <button class="btn" id="resetBtn">重置视图</button>
+    <div class="sep"></div>
+    <label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:4px;">文字颜色<input type="color" id="textColorPicker" value="#00e5ff" style="width:28px;height:24px;border:1px solid var(--border);border-radius:4px;background:#000;padding:0;cursor:pointer;"></label>
+  </div>
+
+  <div class="panel" id="infoPanel">
+    <h3>模型信息</h3>
+    <div class="row"><span>文件</span><span id="iName">—</span></div>
+    <div class="row"><span>格式</span><span id="iFmt">—</span></div>
+    <div class="row"><span>顶点</span><span id="iVert">—</span></div>
+    <div class="row"><span>三角面</span><span id="iTri">—</span></div>
+    <div class="row"><span>材质</span><span id="iMat">—</span></div>
+    <div class="row"><span>动画</span><span id="iAnim">—</span></div>
+    <div class="row"><span>尺寸(m)</span><span id="iSize">—</span></div>
+    <div class="row"><span>测量</span><span id="iMeasure">—</span></div>
+  </div>
+
+  <div class="panel" id="transformPanel" style="left:auto;right:12px;top:72px;width:230px;">
+    <h3>变换数值</h3>
+    <div class="row"><span>位置 X</span><input class="num" id="tx" type="number" step="0.01"></div>
+    <div class="row"><span>位置 Y</span><input class="num" id="ty" type="number" step="0.01"></div>
+    <div class="row"><span>位置 Z</span><input class="num" id="tz" type="number" step="0.01"></div>
+    <div class="row"><span>旋转 X°</span><input class="num" id="rx" type="number" step="1"></div>
+    <div class="row"><span>旋转 Y°</span><input class="num" id="ry" type="number" step="1"></div>
+    <div class="row"><span>旋转 Z°</span><input class="num" id="rz" type="number" step="1"></div>
+    <div class="row"><span>缩放 X</span><input class="num" id="sx" type="number" step="0.01"></div>
+    <div class="row"><span>缩放 Y</span><input class="num" id="sy" type="number" step="0.01"></div>
+    <div class="row"><span>缩放 Z</span><input class="num" id="sz" type="number" step="0.01"></div>
+    <div style="margin-top:8px;display:flex;gap:6px;align-items:center;">
+      <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;"><input type="checkbox" id="autoSnap" checked>自动吸附地面</label>
+      <button class="btn" id="applyTransform" style="margin-left:auto;">应用</button>
+    </div>
+  </div>
+
+  <div class="drop" id="drop">
+    <div class="box">
+      <h2>拖拽 3D 模型到此处</h2>
+      <p>支持 FBX · GLB/GLTF · OBJ · STL · PLY · DAE · 3MF</p>
+      <p style="font-size:11px;color:#7a7f99">大模型建议使用 GLB（Draco 压缩）</p>
+      <label for="file">或选择文件</label>
+    </div>
+  </div>
+
+  <div class="status">
+    <span id="status">就绪</span>
+    <span id="err" class="err"></span>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+import { ColladaLoader } from 'three/addons/loaders/ColladaLoader.js';
+import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+const canvas = document.getElementById('c');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.001, 10000);
+camera.position.set(3,2,4);
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true, preserveDrawingBuffer:true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.localClippingEnabled = true;
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+// Transform controls (gizmo)
+const tControls = new TransformControls(camera, renderer.domElement);
+tControls.visible = false;
+scene.add(tControls);
+tControls.addEventListener('dragging-changed', (event) => {
+  controls.enabled = !event.value;
+  if (!event.value) { snapToGround(); updateTransformInputs(); }
+});
+
+const amb = new THREE.AmbientLight(0xffffff,0.45); scene.add(amb);
+const key = new THREE.DirectionalLight(0xffffff,1.1); key.position.set(5,8,5); key.castShadow=true;
+key.shadow.mapSize.set(2048,2048); scene.add(key);
+const fill = new THREE.DirectionalLight(0x8899ff,0.35); fill.position.set(-5,3,-3); scene.add(fill);
+const rim = new THREE.PointLight(0xffaa66,0.5,20); rim.position.set(0,2,-4); scene.add(rim);
+
+const grid = new THREE.GridHelper(20,40,0x333355,0x22223a); scene.add(grid);
+const axes = new THREE.AxesHelper(1); axes.visible=false; scene.add(axes);
+const plane = new THREE.Mesh(new THREE.PlaneGeometry(20,20), new THREE.MeshStandardMaterial({color:0x1a1a2a,roughness:0.9}));
+plane.rotation.x=-Math.PI/2; plane.position.y=-0.001; plane.receiveShadow=true; scene.add(plane);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+let envMap = null;
+function setEnv(enabled){
+  if(enabled && !envMap){
+    const room = new RoomEnvironment();
+    envMap = pmrem.fromScene(room,0.04).texture;
+    room.dispose();
+  }
+  scene.environment = enabled ? envMap : null;
+}
+
+const draco = new DRACOLoader();
+draco.setDecoderPath('https://cdn.jsdelivr.net/npm/draco3d@1.5.6/draco/');
+const ktx2 = new KTX2Loader();
+ktx2.setTranscoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/basis/');
+
+const gltfLoader = new GLTFLoader();
+gltfLoader.setDRACOLoader(draco);
+gltfLoader.setKTX2Loader(ktx2);
+gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+
+let model = null;
+let mixer = null;
+let animations = [];
+let clippingPlane = new THREE.Plane(new THREE.Vector3(0,-1,0), 0);
+let clipEnabled = false;
+const clock = new THREE.Clock();
+
+const $ = id => document.getElementById(id);
+
+// Text color customization
+const colorPicker = $('textColorPicker');
+function applyTextColor(color) {
+  document.documentElement.style.setProperty('--text', color);
+  document.documentElement.style.setProperty('--muted', color);
+  document.documentElement.style.setProperty('--accent', color);
+  document.documentElement.style.setProperty('--border', color);
+  try { localStorage.setItem('uiTextColor', color); } catch (e) {}
+}
+if (colorPicker) {
+  colorPicker.addEventListener('input', (e) => applyTextColor(e.target.value));
+  try {
+    const saved = localStorage.getItem('uiTextColor');
+    if (saved) { colorPicker.value = saved; applyTextColor(saved); }
+  } catch (e) {}
+}
+
+// Precise transform inputs + auto-snap to ground
+const DEG = 180 / Math.PI;
+function updateTransformInputs() {
+  if (!model) return;
+  $('tx').value = model.position.x.toFixed(3);
+  $('ty').value = model.position.y.toFixed(3);
+  $('tz').value = model.position.z.toFixed(3);
+  $('rx').value = (model.rotation.x * DEG).toFixed(2);
+  $('ry').value = (model.rotation.y * DEG).toFixed(2);
+  $('rz').value = (model.rotation.z * DEG).toFixed(2);
+  $('sx').value = model.scale.x.toFixed(3);
+  $('sy').value = model.scale.y.toFixed(3);
+  $('sz').value = model.scale.z.toFixed(3);
+}
+function applyTransformFromInputs() {
+  if (!model) return;
+  model.position.set(parseFloat($('tx').value) || 0, parseFloat($('ty').value) || 0, parseFloat($('tz').value) || 0);
+  model.rotation.set((parseFloat($('rx').value) || 0) / DEG, (parseFloat($('ry').value) || 0) / DEG, (parseFloat($('rz').value) || 0) / DEG);
+  model.scale.set(parseFloat($('sx').value) || 1, parseFloat($('sy').value) || 1, parseFloat($('sz').value) || 1);
+  updateTransformInputs();
+}
+function snapToGround() {
+  if (!model) return;
+  if (!$('autoSnap').checked) return;
+  const box = new THREE.Box3().setFromObject(model);
+  model.position.y -= box.min.y;
+}
+['tx','ty','tz','rx','ry','rz','sx','sy','sz'].forEach(id => {
+  const el = $(id);
+  if (el) el.addEventListener('change', applyTransformFromInputs);
+});
+$('applyTransform').onclick = applyTransformFromInputs;
+tControls.addEventListener('change', () => {
+  const active = document.activeElement;
+  if (active && active.classList && active.classList.contains('num')) return;
+  updateTransformInputs();
+});
+tControls.addEventListener('mouseUp', () => {
+  snapToGround();
+  updateTransformInputs();
+});
+function setStatus(t){ $('status').textContent = t; }
+function setErr(t){ $('err').textContent = t; }
+
+function countModel(obj){
+  let verts=0, tris=0, mats=new Set();
+  obj.traverse(n=>{
+    if(n.isMesh && n.geometry){
+      const g=n.geometry;
+      const pos=g.attributes && g.attributes.position;
+      if(pos) verts += pos.count;
+      if(g.index) tris += g.index.count/3; else if(pos) tris += pos.count/3;
+      if(n.material){ const m=Array.isArray(n.material)?n.material:[n.material]; m.forEach(x=>mats.add(x.uuid)); }
+    }
+  });
+  return {verts:Math.round(verts), tris:Math.round(tris), mats:mats.size};
+}
+
+function frameObject(obj){
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x,size.y,size.z)||1;
+  const scale = 2.5/maxDim;
+  obj.scale.setScalar(scale);
+  const box2 = new THREE.Box3().setFromObject(obj);
+  const c2 = box2.getCenter(new THREE.Vector3());
+  obj.position.sub(c2);
+  const box3 = new THREE.Box3().setFromObject(obj);
+  obj.position.y -= box3.min.y;
+  controls.target.set(0, box3.getSize(new THREE.Vector3()).y*0.5, 0);
+  camera.position.set(maxDim*scale*1.6, maxDim*scale*1.2, maxDim*scale*1.6);
+  controls.update();
+  return {size: size.clone().multiplyScalar(scale)};
+}
+
+function setWireOverlay(on){
+  if(!model) return;
+  model.traverse(n=>{
+    if(n.isMesh && n.material){
+      const mats=Array.isArray(n.material)?n.material:[n.material];
+      mats.forEach(m=>{ m.wireframe = on; });
+    }
+  });
+}
+
+function onLoaded(obj, anims, name, fmt){
+  if(model){ scene.remove(model); }
+  model = obj;
+  animations = anims || [];
+  model.traverse(n=>{
+    if(n.isMesh){ n.castShadow=true; n.receiveShadow=true; if(!n.material) n.material=new THREE.MeshStandardMaterial({color:0xcccccc}); }
+  });
+  scene.add(model);
+  tControls.detach();
+  tControls.attach(model);
+  // default hidden until mode selected
+  tControls.visible = ($('transformMode').value !== 'none');
+  const info = countModel(model);
+  const dims = frameObject(model);
+  $('iName').textContent = name || '—';
+  $('iFmt').textContent = fmt.toUpperCase();
+  $('iVert').textContent = info.verts.toLocaleString();
+  $('iTri').textContent = info.tris.toLocaleString();
+  $('iMat').textContent = info.mats;
+  $('iAnim').textContent = animations.length;
+  $('iSize').textContent = `${dims.size.x.toFixed(2)} × ${dims.size.y.toFixed(2)} × ${dims.size.z.toFixed(2)}`;
+  const sel = $('animSelect');
+  while (sel.firstChild) sel.removeChild(sel.firstChild);
+  animations.forEach((c,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=c.name||('Anim '+(i+1)); sel.appendChild(o); });
+  if(animations.length){ $('animCtl').classList.add('show'); }
+  else { $('animCtl').classList.remove('show'); }
+  if(mixer){ mixer.stopAllAction(); }
+  mixer = animations.length ? new THREE.AnimationMixer(model) : null;
+  document.getElementById('drop').classList.add('hidden');
+  updateTransformInputs();
+  setStatus('已加载: '+name);
+  setErr('');
+}
+
+function loadBuffer(buffer, name){
+  setErr(''); setStatus('解析中…');
+  const ext = name.split('.').pop().toLowerCase();
+  try {
+    if(ext==='fbx'){
+      const loader=new FBXLoader();
+      const obj=loader.parse(buffer,'');
+      onLoaded(obj, obj.animations||[], name, ext);
+    } else if(ext==='obj'){
+      const text=new TextDecoder().decode(buffer);
+      const obj=new OBJLoader().parse(text);
+      onLoaded(obj, [], name, ext);
+    } else if(ext==='stl'){
+      const geo=new STLLoader().parse(buffer);
+      const mesh=new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color:0xcccccc,roughness:0.4,metalness:0.3}));
+      onLoaded(mesh, [], name, ext);
+    } else if(ext==='ply'){
+      const geo=new PLYLoader().parse(buffer,'');
+      const mesh=new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color:0xcccccc,roughness:0.4,metalness:0.2,vertexColors:!!geo.attributes.color}));
+      onLoaded(mesh, [], name, ext);
+    } else if(ext==='dae'){
+      const text=new TextDecoder().decode(buffer);
+      const collada=new ColladaLoader().parse(text,'');
+      onLoaded(collada.scene, collada.animations||[], name, ext);
+    } else if(ext==='3mf'){
+      const obj=new ThreeMFLoader().parse(buffer,'');
+      onLoaded(obj, [], name, ext);
+    } else if(ext==='glb'||ext==='gltf'){
+      gltfLoader.parse(buffer,'',(gltf)=>{ onLoaded(gltf.scene, gltf.animations||[], name, ext); },
+        (e)=>{ setErr('GLTF 解析失败: '+(e&&e.message?e.message:e)); setStatus(''); });
+    } else {
+      setErr('不支持的格式: '+ext); setStatus('');
+    }
+  } catch(e){
+    console.error(e);
+    setErr('加载失败: '+(e&&e.message?e.message:e));
+    setStatus('');
+  }
+}
+
+function readFile(f){ const r=new FileReader(); r.onload=()=>loadBuffer(r.result,f.name); r.onerror=()=>setErr('读取文件失败'); r.readAsArrayBuffer(f); }
+
+const fileInput=$('file');
+$('openBtn').onclick=()=>fileInput.click();
+fileInput.onchange=e=>{ const f=e.target.files&&e.target.files[0]; if(f) readFile(f); };
+
+const drop=$('drop');
+drop.ondragover=e=>{e.preventDefault(); drop.style.background='rgba(106,123,255,0.12)';};
+drop.ondragleave=()=>{ drop.style.background='rgba(11,13,20,0.88)'; };
+drop.ondrop=e=>{ e.preventDefault(); drop.style.background='rgba(11,13,20,0.88)'; const f=e.dataTransfer.files&&e.dataTransfer.files[0]; if(f) readFile(f); };
+
+$('viewMode').onchange=e=>{ /* placeholder */ };
+$('wireBtn').onclick=e=>{ const on=!e.target.classList.contains('active'); e.target.classList.toggle('active',on); setWireOverlay(on); };
+
+$('bgMode').onchange=e=>{
+  const v=e.target.value;
+  if(v==='dark'){ scene.background=new THREE.Color(0x000000); plane.material.color.set(0x1a1a2a); }
+  else if(v==='light'){ scene.background=new THREE.Color(0xdfe3ee); plane.material.color.set(0xcccccc); }
+  else if(v==='studio'){ scene.background=new THREE.Color(0x8a90a8); plane.material.color.set(0xbbbbbb); setEnv(true); }
+  else if(v==='transparent'){ scene.background=null; renderer.setClearColor(0x000000,0); }
+};
+$('envBtn').onclick=e=>{ const on=!e.target.classList.contains('active'); e.target.classList.toggle('active',on); setEnv(on); };
+
+$('gridBtn').onclick=e=>{ const on=!e.target.classList.contains('active'); e.target.classList.toggle('active',on); grid.visible=on; plane.visible=on; };
+$('axesBtn').onclick=e=>{ const on=!e.target.classList.contains('active'); e.target.classList.toggle('active',on); axes.visible=on; };
+
+// Transform mode
+$('transformMode').onchange=e=>{
+  const m=e.target.value;
+  if(m==='none'){ tControls.visible=false; tControls.detach(); }
+  else { if(model) tControls.attach(model); tControls.setMode(m); tControls.visible=true; }
+};
+let spaceWorld=true;
+$('spaceBtn').onclick=e=>{
+  spaceWorld=!spaceWorld;
+  e.target.textContent = spaceWorld?'世界坐标':'局部坐标';
+  e.target.classList.toggle('active',!spaceWorld);
+  tControls.setSpace(spaceWorld?'world':'local');
+};
+$('snapInput').onchange=e=>{
+  const v=parseFloat(e.target.value)||0;
+  tControls.setTranslationSnap(v>0?v:null);
+  tControls.setRotationSnap(v>0?v:null);
+  tControls.setScaleSnap(v>0?v:null);
+};
+
+let measureMode=false, measurePoints=[];
+const measureMarkers=new THREE.Group(); scene.add(measureMarkers);
+$('measureBtn').onclick=e=>{
+  measureMode=!measureMode; e.target.classList.toggle('active',measureMode);
+  setStatus(measureMode?'测量模式：点击模型两点':'测量已关闭');
+  if(!measureMode){ measurePoints=[]; measureMarkers.clear(); $('iMeasure').textContent='—'; }
+};
+renderer.domElement.addEventListener('click', (ev)=>{
+  if(!measureMode || !model) return;
+  const rect=renderer.domElement.getBoundingClientRect();
+  const mouse=new THREE.Vector2(((ev.clientX-rect.left)/rect.width)*2-1, -((ev.clientY-rect.top)/rect.height)*2+1);
+  const ray=new THREE.Raycaster(); ray.setFromCamera(mouse,camera);
+  const hits=ray.intersectObject(model,true);
+  if(!hits.length) return;
+  const p=hits[0].point.clone();
+  measurePoints.push(p);
+  const m=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,16), new THREE.MeshBasicMaterial({color:0xff5555}));
+  m.position.copy(p); measureMarkers.add(m);
+  if(measurePoints.length===2){
+    const d=measurePoints[0].distanceTo(measurePoints[1]);
+    $('iMeasure').textContent=(d*1000).toFixed(1)+' mm';
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(measurePoints), new THREE.LineBasicMaterial({color:0xff5555}));
+    measureMarkers.add(line);
+    setStatus('距离: '+(d*1000).toFixed(1)+' mm');
+  } else if(measurePoints.length>2){
+    measurePoints=[]; measureMarkers.clear();
+    const m2=new THREE.Mesh(new THREE.SphereGeometry(0.03,16,16), new THREE.MeshBasicMaterial({color:0xff5555}));
+    m2.position.copy(p); measureMarkers.add(m2); measurePoints.push(p);
+  }
+});
+
+$('clipBtn').onclick=e=>{
+  clipEnabled=!clipEnabled; e.target.classList.toggle('active',clipEnabled);
+  $('clipCtl').classList.toggle('show',clipEnabled);
+  if(clipEnabled){ renderer.clippingPlanes=[clippingPlane]; updateClip(); }
+  else { renderer.clippingPlanes=[]; }
+};
+function updateClip(){
+  const v=$('clipSlider').value/100;
+  clippingPlane.constant = (v*2-1)*1.5;
+}
+$('clipSlider').oninput=updateClip;
+
+$('animPlay').onclick=()=>{
+  if(!mixer || !animations.length) return;
+  const idx=parseInt($('animSelect').value,10);
+  mixer.stopAllAction();
+  const action=mixer.clipAction(animations[idx]);
+  action.reset().play();
+  setStatus('播放动画: '+(animations[idx].name||idx));
+};
+
+$('shotBtn').onclick=()=>{
+  const url=renderer.domElement.toDataURL('image/png');
+  const a=document.createElement('a'); a.href=url; a.download='model_screenshot.png'; a.click();
+  setStatus('已截图');
+};
+
+$('fsBtn').onclick=()=>{
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+};
+
+$('resetBtn').onclick=()=>{ if(model) frameObject(model); controls.reset(); };
+
+window.addEventListener('resize',()=>{
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+});
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=clock.getDelta();
+  if(mixer) mixer.update(dt);
+  controls.update();
+  renderer.render(scene,camera);
+}
+animate();
+setStatus('就绪 — 拖拽或选择模型文件');
+</script>
+</body>
+</html>
